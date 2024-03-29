@@ -1,7 +1,7 @@
 param ([switch]$ignorehistory, [switch]$randomavatar, [switch]$v)
  
  <#
----OnlyFans Metadata DB to Stash PoSH Script 0.9---
+---OnlyFans Metadata DB to Stash PoSH Script 0.10---
 
 AUTHOR
     JuiceBox
@@ -202,7 +202,13 @@ function Set-Config{
         Add-Content -path $PathToConfigFile -value "## Search Specificity mode. (Normal | High | Low) ##"
         Add-Content -path $PathToConfigFile -value $SearchSpecificity
         Add-Content -path $PathToConfigFile -value "## Stash API Key (Danger!)##"
-        Add-Content -path $PathToConfigFile -value $StashAPIKey
+        if($null -eq $StashAPIKey){
+            Add-Content -path $PathToConfigFile -value "`n"    
+        }
+        else{
+            Add-Content -path $PathToConfigFile -value $StashAPIKey
+        }
+        
     }
     catch {
         write-output "Error - Something went wrong while trying add your configurations to the config file ($PathToConfigFile)" -ForegroundColor red
@@ -839,7 +845,7 @@ function Add-MetadataUsingOFDB{
                     #Normal specificity, search for videos based on having the performer name somewhere in the path and a matching filesize
                     if ($mediatype -eq "video" -and $searchspecificity -match "normal"){
                         $StashGQL_Query = 'mutation {
-                            querySQL(sql: "SELECT folders.path, files.basename, files.size, files.id AS files_id, folders.id AS folders_id, scenes.id AS scenes_id, scenes.title AS scenes_title, scenes.details AS scenes_details FROM files JOIN folders ON files.parent_folder_id=folders.id JOIN scenes_files ON files.id = scenes_files.file_id JOIN scenes ON scenes.id = scenes_files.scene_id WHERE path LIKE ''%'+$performername+'%'' AND size = '''+$OFDBfilesize+'''") {
+                            querySQL(sql: "SELECT folders.path, files.basename, files.size, files.id AS files_id, folders.id AS folders_id, scenes.id AS scenes_id, scenes.title AS scenes_title, scenes.details AS scenes_details FROM files JOIN folders ON files.parent_folder_id=folders.id JOIN scenes_files ON files.id = scenes_files.file_id JOIN scenes ON scenes.id = scenes_files.scene_id WHERE files.basename ='''+$OFDBfilenameForQuery+''' AND size = '''+$OFDBfilesize+'''") {
                             rows
                           }
                         }'             
@@ -1515,7 +1521,7 @@ if(($SearchSpecificity -notmatch '\blow\b|\bnormal\b|\bhigh\b')){
 }
 else {
     clear-host
-    write-host "- OnlyFans Metadata DB to Stash PoSH Script 0.9 - `n(https://github.com/ALonelyJuicebox/OFMetadataToStash)`n" -ForegroundColor cyan
+    write-host "- OnlyFans Metadata DB to Stash PoSH Script 0.10 - `n(https://github.com/ALonelyJuicebox/OFMetadataToStash)`n" -ForegroundColor cyan
     write-output "By JuiceBox`n`n----------------------------------------------------`n"
     write-output "* Path to OnlyFans Media:     $PathToOnlyFansContent"
     write-output "* Metadata Match Mode:        $searchspecificity"
@@ -1531,8 +1537,8 @@ else {
     }
     write-output "----------------------------------------------------`n"
     write-output "What would you like to do?"
-    write-output " 1 - Add Metadata to my Stash using OnlyFans Metadata Database(s)"
-    write-output " 2 - Add Metadata to my Stash without using OnlyFans Metadata Database(s)"
+    write-output " 1 - Add Metadata to my Stash using a Metadata Database(s)"
+    write-output " 2 - Add Metadata to my Stash without using a Metadata Database(s)"
     write-output " 3 - Generate a redacted, sanitized copy of my OnlyFans Metadata Database file(s)"
     write-output " 4 - Change Settings"
 }
