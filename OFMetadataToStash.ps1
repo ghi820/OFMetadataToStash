@@ -1288,19 +1288,22 @@ function Add-MetadataUsingOFDB{
                 #Sometimes these OF downloaders pull profile/avatar photos into a specific folder. We'll look to see if we can match on that first before just choosing what we can get.
 
                 #Using the filepath of the metadata database as our starting point, we'll go a folder up and then look for an image containing the keyword "avatar"
-                $pathToAvatarImage = (get-item $currentdatabase.FullName)
-                $pathToAvatarImage = split-path -parent $pathToAvatarImage
+                $pathToAvatarImage = split-path -parent $currentdatabase
                 $pathToAvatarImage = split-path -parent $pathToAvatarImage
                 $pathToAvatarImage = "$pathToAvatarImage"+"$directorydelimiter"+"Profile"
 
                 #Let's check to see if there are any images in the profile folder
                 if(test-path $pathToAvatarImage){
-                    $potentialAvatarImages = get-childitem $pathToAvatarImage | where-object{ $_.extension -in ".jpg", ".jpeg"}
+                    $potentialAvatarImages = get-childitem $pathToAvatarImage -recurse| where-object{ $_.extension -in ".jpg", ".jpeg"}
+                }
+                #If there are no images in the path, let's make the if condition straightforward.
+                else{
+                    $pathToAvatarImage = $false
                 }
 
                 
                 #If there are images that we can potentially use, let's do it (unless the flag to just randomize the profile picture is there)
-                if(!($randomavatar) -and $potentialAvatarImages -gt 0){
+                if(!($randomavatar) -and $potentialAvatarImages.count -ne 0 -and $pathToAvatarImage){
 
                     $avatarImage = $null #We use this to determine if we need to just use whatever's left.
 
@@ -1322,11 +1325,10 @@ function Add-MetadataUsingOFDB{
                     }
                     if ($null -eq $avatarImage){
                         $avatarImage = $potentialAvatarImages[0]
-                        write-host $avatarImage.fullname
                     }
 
                     #Convert the image to base64. Note that this is designed for jpegs-- I don't think OnlyFans supports anything else anyway.
-                    
+
                     # Read the image bytes from the file
                     $ImageBytes = [System.IO.File]::ReadAllBytes($avatarImage)
 
