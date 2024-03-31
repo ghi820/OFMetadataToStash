@@ -795,7 +795,7 @@ function Add-MetadataUsingOFDB{
 
                     #Let's help the user see how we are progressing through this performer's metadata database
                     $currentProgress = [int]$(($progressCounter/$OFDBQueryResult.count)*100)
-                    Write-Progress -parentId 1 -Activity "$performername Import Progress" -Status "$currentProgress% Complete" -PercentComplete $currentProgress
+                    Write-Progress -id 2 -parentId 1 -Activity "$performername Import Progress" -Status "$currentProgress% Complete" -PercentComplete $currentProgress
                     $progressCounter++
     
                     #Generating the URL for this post
@@ -1293,27 +1293,43 @@ function Add-MetadataUsingOFDB{
                 $pathToAvatarImage = split-path -parent $pathToAvatarImage
                 $pathToAvatarImage = "$pathToAvatarImage"+"$directorydelimiter"+"Profile"
 
-                
-                #If there's a profile folder to look into, let's do it (unless the flag to just randomize the profile picture is there)
-                if(!($randomavatar) -and (test-path $pathToAvatarImage)){
-                    $avatarfolder = "$pathToAvatarImage"+"$directorydelimiter"+"Avatars"
-                    $profileimagesfolder = "$pathToAvatarImage"+"$directorydelimiter"+"images"
+                #Let's check to see if there are any images in the profile folder
+                if(test-path $pathToAvatarImage){
+                    $potentialAvatarImages = get-childitem $pathToAvatarImage | where-object{ $_.extension -in ".jpg", ".jpeg"}
+                }
 
-                    if(test-path $avatarfolder){
-                        $pathToAvatarImage =  Get-ChildItem $avatarfolder | where-object{ $_.extension -in ".jpg", ".jpeg"}
-                        $pathToAvatarImage = $pathToAvatarImage
+                
+                #If there are images that we can potentially use, let's do it (unless the flag to just randomize the profile picture is there)
+                if(!($randomavatar) -and $potentialAvatarImages -gt 0){
+
+                    $avatarImage = $null #We use this to determine if we need to just use whatever's left.
+
+                    foreach($PotentialImage in $potentialAvatarImages){
+                        #In the case we can't find an image that contains the word "avatar",
+                        #we'll use this variable to determine if we can just pick the first known image since we're in the "avatar" folder
+                        $parentDirectoryName = Split-Path -Parent $PotentialImage| Get-Item | Select-Object -ExpandProperty Name
+                
+                        #First let's check to see if this image contains the string 'avatar'
+                        if ($PotentialImage.basename.Contains("avatar")){
+                            $avatarImage = $PotentialImage
+                            break
+                        }
+                        #No dice, let's check to see if we're at least in the 'avatar' folder
+                        elseif ($parentDirectoryName.Contains("avatar")){
+                            $avatarImage = $PotentialImage
+                            break
+                        }
                     }
-                    elseif (test-path $profileimagesfolder){
-                        $pathToAvatarImage =  Get-ChildItem $profileimagesfolder | where-object{ $_.extension -in ".jpg", ".jpeg"}
-                        $pathToAvatarImage = $pathToAvatarImage
+                    if ($null -eq $avatarImage){
+                        $avatarImage = $potentialAvatarImages[0]
+                        write-host $avatarImage.fullname
                     }
-                    #otherwise, let's just take whatever image we can get
-                    else{
-                        $pathToAvatarImage = Get-ChildItem $pathToAvatarImage -recurse | where-object{ $_.extension -in ".jpg", ".jpeg"}
-                    }
-            
+
+                    #Since base64 converting the Avatar image and then importing it to Stash can take a bit of time depending on the size, we'll fill the user in regarding the progress.
+                    Write-Progress -id 2 -parentId 1 -Activity "$performername Import Progress" -Status "100% Complete - Converting & Importing profile picture..." -PercentComplete $currentProgress
+
                     #Convert the image to base64. Note that this is designed for jpegs-- I don't think OnlyFans supports anything else anyway.
-                    $avatarImageBase64 = [convert]::ToBase64String((Get-Content $pathToAvatarImage -AsByteStream))
+                    $avatarImageBase64 = [convert]::ToBase64String((Get-Content $avatarImage -AsByteStream))
                     $avatarImageBase64 = "data:image/jpeg;base64,"+$avatarImageBase64
 
                     $UpdatePerformerImage_GQLQuery ='mutation PerformerUpdate($input: PerformerUpdateInput!) {
@@ -1337,6 +1353,8 @@ function Add-MetadataUsingOFDB{
                         read-host "Press [Enter] to exit"
                         exit
                     }
+                    #There's no other trigger to tell write-progress that we're done with this progress bar, so let's go ahead and do it manually
+                    Write-Progress -id 2 -parentId 1 -completed
                 }
                 
                 #If we didn't find anything on the filesystem, let's just query Stash and use a random image from this performer's associated images
@@ -1527,13 +1545,13 @@ else {
     write-output "* Metadata Match Mode:        $searchspecificity"
     write-output "* Stash URL:                  $StashGQL_URL`n"
     if($v){
-        write-host "Special Mode Enabled: Verbose Output"
+        write-host "Special Mode Enabled: Verbose Output" -ForegroundColor yellow
     }
     if($ignorehistory){
-        write-host "Special Mode Enabled: Ignore History File"
+        write-host "Special Mode Enabled: Ignore History File" -ForegroundColor yellow
     }
     if($randomavatar){
-        write-host "Special Mode Enabled: Random Avatar "
+        write-host "Special Mode Enabled: Random Avatar " -ForegroundColor yellow
     }
     write-output "----------------------------------------------------`n"
     write-output "What would you like to do?"
