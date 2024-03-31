@@ -1325,11 +1325,13 @@ function Add-MetadataUsingOFDB{
                         write-host $avatarImage.fullname
                     }
 
-                    #Since base64 converting the Avatar image and then importing it to Stash can take a bit of time depending on the size, we'll fill the user in regarding the progress.
-                    Write-Progress -id 2 -parentId 1 -Activity "$performername Import Progress" -Status "100% Complete - Converting & Importing profile picture..." -PercentComplete $currentProgress
-
                     #Convert the image to base64. Note that this is designed for jpegs-- I don't think OnlyFans supports anything else anyway.
-                    $avatarImageBase64 = [convert]::ToBase64String((Get-Content $avatarImage -AsByteStream))
+                    
+                    # Read the image bytes from the file
+                    $ImageBytes = [System.IO.File]::ReadAllBytes($avatarImage)
+
+                    # Convert the bytes to a Base64 string
+                    $avatarImageBase64 = [System.Convert]::ToBase64String($ImageBytes)
                     $avatarImageBase64 = "data:image/jpeg;base64,"+$avatarImageBase64
 
                     $UpdatePerformerImage_GQLQuery ='mutation PerformerUpdate($input: PerformerUpdateInput!) {
@@ -1353,8 +1355,6 @@ function Add-MetadataUsingOFDB{
                         read-host "Press [Enter] to exit"
                         exit
                     }
-                    #There's no other trigger to tell write-progress that we're done with this progress bar, so let's go ahead and do it manually
-                    Write-Progress -id 2 -parentId 1 -completed
                 }
                 
                 #If we didn't find anything on the filesystem, let's just query Stash and use a random image from this performer's associated images
