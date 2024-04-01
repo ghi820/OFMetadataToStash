@@ -75,9 +75,12 @@ function Set-Config{
             write-host "As you have set a username/password on your Stash, You'll need to provide this script with your API key."
             write-host "Navigate to this page in your browser to generate one in Stash"
             write-host "$StashGQL_URL/settings?tab=security"
-            write-host "`n- WARNING: The API key will be stored in cleartext in the config file of this script. - "
+            write-host "`n- WARNING: The API key will be stored in cleartext in the config file of this script. - " -ForegroundColor yellow
             write-host "If someone who has access to your Stash gets access to the config file, they may be able to use it to bypass the username and password you've set."
             $StashAPIKey = read-host "`nWhat is your API key?"
+        }
+        else{
+            $StashAPIKey = $false
         }
 
         #Now we can check to ensure this address is valid-- we'll use a very simple GQL query and get the Stash version
@@ -193,22 +196,32 @@ function Set-Config{
     }
 
     try{ 
-        Add-Content -path $PathToConfigFile -value "#### OFMetadataToStash Config File v1 ####"
+        #Connectivity to Stash bits
+        Add-Content -path $PathToConfigFile -value "#### OFMetadataToStash Config File v2 ####"
         Add-Content -path $PathToConfigFile -value "------------------------------------------"
         Add-Content -path $PathToConfigFile -value "## URL to the Stash GraphQL API endpoint ##"
         Add-Content -path $PathToConfigFile -value $StashGQL_URL
+        Add-Content -path $PathToConfigFile -value "## Stash API Key (Danger!)##"
+        Add-Content -path $PathToConfigFile -value $StashAPIKey
+
+        #Metadata matching bits
+        Add-Content -path $PathToConfigFile -value "## Whether or not script should match on filename ($true or $false)##"
+        Add-Content -path $PathToConfigFile -value $matchMetadataOnFilename
+        Add-Content -path $PathToConfigFile -value "## Whether or not script should match on filesize ($true or $false)##"
+        Add-Content -path $PathToConfigFile -value $matchMetadataOnFilesize
+        Add-Content -path $PathToConfigFile -value "## Whether or not script should also check to see if the performername exists in the filepath when matching ($true or $false)##"
+        Add-Content -path $PathToConfigFile -value $matchMetadataOnPerformername
+
+        #Formatting bits
+        Add-Content -path $PathToConfigFile -value "##Naming format for the parent studio (ex Onlyfans)##"
+        Add-Content -path $PathToConfigFile -value $parentStudioNameFormat
+        Add-Content -path $PathToConfigFile -value "##Naming format for the studio (ex JaneAndJohn (OnlyFans)) ##"
+        Add-Content -path $PathToConfigFile -value $studioNameFormat
+
+
+        #Path to content
         Add-Content -path $PathToConfigFile -value "## Direct Path to OnlyFans Metadata Database or top level folder containing OnlyFans content ##"
         Add-Content -path $PathToConfigFile -value $PathToOnlyFansContent
-        Add-Content -path $PathToConfigFile -value "## Search Specificity mode. (Normal | High | Low) ##"
-        Add-Content -path $PathToConfigFile -value $SearchSpecificity
-        Add-Content -path $PathToConfigFile -value "## Stash API Key (Danger!)##"
-        if($null -eq $StashAPIKey){
-            Add-Content -path $PathToConfigFile -value "`n"    
-        }
-        else{
-            Add-Content -path $PathToConfigFile -value $StashAPIKey
-        }
-        
     }
     catch {
         write-output "Error - Something went wrong while trying add your configurations to the config file ($PathToConfigFile)" -ForegroundColor red
@@ -1492,20 +1505,24 @@ $pathtoconfigfile = "."+$directorydelimiter+"OFMetadataToStash_Config"
 if (!(Test-path $PathToConfigFile)){
     Set-Config
 }
+#If the config file version isn't in line with what this script expects, send the user to create one
 $ConfigFileVersion = (Get-Content $pathtoconfigfile)[0]
-if ($ConfigFileVersion -ne "#### OFMetadataToStash Config File v1 ####"){
+if ($ConfigFileVersion -ne "#### OFMetadataToStash Config File v2 ####"){
     Set-Config
 }
 
 ## Global Variables ##
 $StashGQL_URL = (Get-Content $pathtoconfigfile)[3]
-$PathToOnlyFansContent = (Get-Content $pathtoconfigfile)[5]
-$SearchSpecificity = (Get-Content $pathtoconfigfile)[7]
-$StashAPIKey = (Get-Content $pathtoconfigfile)[9]
+$StashAPIKey = (Get-Content $pathtoconfigfile)[5]
+$matchMetadataOnFilename = (Get-Content $pathtoconfigfile)[7]
+$matchMetadataOnFilesize = (Get-Content $pathtoconfigfile)[9]
+$matchMetadataOnPerformername = (Get-Content $pathtoconfigfile)[11]
+$parentStudioNameFormat = (Get-Content $pathtoconfigfile)[13]
+$studioNameFormat = (Get-Content $pathtoconfigfile)[15]
+$PathToOnlyFansContent = (Get-Content $pathtoconfigfile)[17]
 
 $PathToMissingFilesLog = "."+$directorydelimiter+"OFMetadataToStash_MissingFiles.txt"
 $pathToSanitizerScript = "."+$directorydelimiter+"Utilities"+$directorydelimiter+"OFMetadataDatabase_Sanitizer.ps1"
-
 
 #Before we continue, let's make sure everything in the configuration file is good to go
 #This query also serves a second purpose-- as of Stash v0.24, images will support details. We'll check for that and add details if possible.
@@ -1528,17 +1545,18 @@ else {
     $boolSetImageDetails = $true
 }
 
+#If the config file is missing information, send the user to create a new one.
+$checkforemptyvariables = @($StashGQL_URL, $StashAPIKey, $matchMetadataOnFilename, $matchMetadataOnFilesize,$matchMetadataOnPerformername,$parentStudioNameFormat,$studioNameFormat,$PathToOnlyFansContent)
+If ($checkforemptyvariables -contains "") {
+    Set-Config
+}
+
 if (!(test-path $PathToOnlyFansContent)){
     #Couldn't find the path? Send the user to recreate their config file with the set-config function
     read-host "Hmm...The defined path to your OnlyFans content does not seem to exist at the location specified in your config file.`n($PathToOnlyFansContent)`n`nPress [Enter] to run through the config wizard"
     Set-Config
 }
 
-if(($SearchSpecificity -notmatch '\blow\b|\bnormal\b|\bhigh\b')){
-    #Something goofy with the variable? Send the user to recreate their config file with the set-config function
-    read-host "Hmm...The Metadata Match Mode parameter isn't well defined in your configuration file. No worries!`n`nPress [Enter] to run through the config wizard"
-    Set-Config
-}
 else {
     clear-host
     write-host "- OnlyFans Metadata DB to Stash PoSH Script 0.10 - `n(https://github.com/ALonelyJuicebox/OFMetadataToStash)`n" -ForegroundColor cyan
