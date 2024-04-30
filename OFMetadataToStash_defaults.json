@@ -1,0 +1,12 @@
+{
+    "version": 3,
+    "api_url": "http://localhost:9999/graphql",
+    "metadata_folder": null,
+    "specificity": null,
+    "api_token": false,
+    "match_filename": false,
+    "match_size": false,
+    "match_performer": false,
+    "parent_studio_format": "Onlyfans",
+    "studio_format": "JaneAndJohn (OnlyFans)"
+}
