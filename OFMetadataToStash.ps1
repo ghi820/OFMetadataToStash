@@ -853,12 +853,15 @@ function Add-MetadataUsingOFDB{
                     if (($mediaToProcessSelector -eq 3) -and ($mediatype -eq "video")){
                         continue #Skip to the next item in this foreach, user only wants to process images
                     }
+
+                    $VideoMutationBaseQuery='SELECT folders.path, files.basename, files.size, files.id AS files_id, folders.id AS folders_id, scenes.id AS scenes_id, scenes.title AS scenes_title, scenes.details AS scenes_details FROM files JOIN folders ON files.parent_folder_id=folders.id JOIN scenes_files ON files.id = scenes_files.file_id JOIN scenes ON scenes.id = scenes_files.scene_id'
+                    $ImageMutationBaseQuery='SELECT folders.path, files.basename, files.size, files.id AS files_id, folders.id AS folders_id, images.id AS images_id, images.title AS images_title FROM files JOIN folders ON files.parent_folder_id=folders.id JOIN images_files ON files.id = images_files.file_id JOIN images ON images.id = images_files.image_id'
                     
                     #Depending on user preference, we want to be more/less specific with our SQL queries to the Stash DB here, as determined by this condition tree (defined in order of percieved popularity)
                     #Normal specificity, search for videos based on having the performer name somewhere in the path and a matching filesize
                     if ($mediatype -eq "video" -and $searchspecificity -match "normal"){
                         $StashGQL_Query = 'mutation {
-                            querySQL(sql: "SELECT folders.path, files.basename, files.size, files.id AS files_id, folders.id AS folders_id, scenes.id AS scenes_id, scenes.title AS scenes_title, scenes.details AS scenes_details FROM files JOIN folders ON files.parent_folder_id=folders.id JOIN scenes_files ON files.id = scenes_files.file_id JOIN scenes ON scenes.id = scenes_files.scene_id WHERE files.basename ='''+$OFDBfilenameForQuery+''' AND size = '''+$OFDBfilesize+'''") {
+                            querySQL(sql: "'+$VideoMutationBaseQuery+' WHERE files.basename ='''+$OFDBfilenameForQuery+''' AND size = '''+$OFDBfilesize+'''") {
                             rows
                           }
                         }'             
@@ -866,7 +869,7 @@ function Add-MetadataUsingOFDB{
                     #Normal specificity, search for images based on having the performer name somewhere in the path and a matching filesize
                     elseif ($mediatype -eq "image" -and $searchspecificity -match "normal"){
                         $StashGQL_Query = 'mutation {
-                            querySQL(sql: "SELECT folders.path, files.basename, files.size, files.id AS files_id, folders.id AS folders_id, images.id AS images_id, images.title AS images_title FROM files JOIN folders ON files.parent_folder_id=folders.id JOIN images_files ON files.id = images_files.file_id JOIN images ON images.id = images_files.image_id WHERE path LIKE ''%'+$performername+'%'' AND size = '''+$OFDBfilesize+'''") {
+                            querySQL(sql: "'+$ImageMutationBaseQuery+' WHERE path LIKE ''%'+$performername+'%'' AND size = '''+$OFDBfilesize+'''") {
                             rows
                           }
                         }'
@@ -874,7 +877,7 @@ function Add-MetadataUsingOFDB{
                     #Low specificity, search for videos based on filesize only
                     elseif ($mediatype -eq "video" -and $searchspecificity -match "low"){
                         $StashGQL_Query = 'mutation {
-                            querySQL(sql: "SELECT folders.path, files.basename, files.size, files.id AS files_id, folders.id AS folders_id, scenes.id AS scenes_id, scenes.title AS scenes_title, scenes.details AS scenes_details FROM files JOIN folders ON files.parent_folder_id=folders.id JOIN scenes_files ON files.id = scenes_files.file_id JOIN scenes ON scenes.id = scenes_files.scene_id WHERE size = '''+$OFDBfilesize+'''") {
+                            querySQL(sql: "'+$VideoMutationBaseQuery+' WHERE size = '''+$OFDBfilesize+'''") {
                             rows
                           }
                         }'   
@@ -882,7 +885,7 @@ function Add-MetadataUsingOFDB{
                     #Low specificity, search for images based on filesize only
                     elseif ($mediatype -eq "image" -and $searchspecificity -match "low"){
                         $StashGQL_Query = 'mutation {
-                            querySQL(sql: "SELECT folders.path, files.basename, files.size, files.id AS files_id, folders.id AS folders_id, images.id AS images_id, images.title AS images_title FROM files JOIN folders ON files.parent_folder_id=folders.id JOIN images_files ON files.id = images_files.file_id JOIN images ON images.id = images_files.image_id WHERE size = '''+$OFDBfilesize+'''") {
+                            querySQL(sql: "'+$ImageMutationBaseQuery+' WHERE size = '''+$OFDBfilesize+'''") {
                             rows
                           }
                         }'
@@ -891,7 +894,7 @@ function Add-MetadataUsingOFDB{
                     #High specificity, search for videos based on matching file name between OnlyFans DB and Stash DB as well as matching the filesize. 
                     elseif ($mediatype -eq "video" -and $searchspecificity -match "high"){
                         $StashGQL_Query = 'mutation {
-                            querySQL(sql: "SELECT folders.path, files.basename, files.size, files.id AS files_id, folders.id AS folders_id, scenes.id AS scenes_id, scenes.title AS scenes_title, scenes.details AS scenes_details FROM files JOIN folders ON files.parent_folder_id=folders.id JOIN scenes_files ON files.id = scenes_files.file_id JOIN scenes ON scenes.id = scenes_files.scene_id WHERE files.basename ='''+$OFDBfilenameForQuery+''' AND size = '''+$OFDBfilesize+'''") {
+                            querySQL(sql: "'+$VideoMutationBaseQuery+' WHERE files.basename ='''+$OFDBfilenameForQuery+''' AND size = '''+$OFDBfilesize+'''") {
                             rows
                           }
                         }'
@@ -900,7 +903,7 @@ function Add-MetadataUsingOFDB{
                     #High specificity, search for images based on matching file name between OnlyFans DB and Stash DB as well as matching the filesize. 
                     else{
                         $StashGQL_Query = 'mutation {
-                            querySQL(sql: "SELECT folders.path, files.basename, files.size, files.id AS files_id, folders.id AS folders_id, images.id AS images_id, images.title AS images_title FROM files JOIN folders ON files.parent_folder_id=folders.id JOIN images_files ON files.id = images_files.file_id JOIN images ON images.id = images_files.image_id WHERE files.basename ='''+$OFDBfilenameForQuery+''' AND size = '''+$OFDBfilesize+'''") {
+                            querySQL(sql: "'+$ImageMutationBaseQuery+' WHERE files.basename ='''+$OFDBfilenameForQuery+''' AND size = '''+$OFDBfilesize+'''") {
                             rows
                           }
                         }'
@@ -966,7 +969,7 @@ function Add-MetadataUsingOFDB{
                             if ($mediatype -eq "video"){
                                
                                 $StashGQL_Query = 'mutation {
-                                    querySQL(sql: "SELECT folders.path, files.basename, files.size, files.id AS files_id, folders.id AS folders_id, scenes.id AS scenes_id, scenes.title AS scenes_title, scenes.details AS scenes_details FROM files JOIN folders ON files.parent_folder_id=folders.id JOIN scenes_files ON files.id = scenes_files.file_id JOIN scenes ON scenes.id = scenes_files.scene_id path LIKE ''%'+$performername+'%'' AND files.basename ='''+$OFDBfilenameForQuery+''' AND size = '''+$OFDBfilesize+'''") {
+                                    querySQL(sql: "'+$VideoMutationBaseQuery+' WHERE path LIKE ''%'+$performername+'%'' AND files.basename ='''+$OFDBfilenameForQuery+''' AND size = '''+$OFDBfilesize+'''") {
                                     rows
                                   }
                                 }'
@@ -976,7 +979,7 @@ function Add-MetadataUsingOFDB{
                             elseif ($mediatype -eq "image" ){
                                 
                                 $StashGQL_Query = 'mutation {
-                                    querySQL(sql: "SELECT folders.path, files.basename, files.size, files.id AS files_id, folders.id AS folders_id, images.id AS images_id, images.title AS images_title FROM files JOIN folders ON files.parent_folder_id=folders.id JOIN images_files ON files.id = images_files.file_id JOIN images ON images.id = images_files.image_id WHERE path LIKE ''%'+$performername+'%'' AND files.basename ='''+$OFDBfilenameForQuery+''' AND size = '''+$OFDBfilesize+'''") {
+                                    querySQL(sql: "'+$ImageMutationBaseQuery+' WHERE path LIKE ''%'+$performername+'%'' AND files.basename ='''+$OFDBfilenameForQuery+''' AND size = '''+$OFDBfilesize+'''") {
                                     rows
                                   }
                                 }'
