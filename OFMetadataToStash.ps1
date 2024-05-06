@@ -286,7 +286,7 @@ function DatabaseHasAlreadyBeenImported{
             if([datetime]$metadataLastWriteTime -gt [datetime]$performerFromHistory.import_date){
                 $currenttimestamp = get-date -format o
                 try { 
-                    $historyQuery = 'UPDATE import_date SET import_date = "'+$currenttimestamp+'" WHERE history.performer = "'+$performername+'"'
+                    $historyQuery = 'UPDATE history SET import_date = "'+$currenttimestamp+'" WHERE history.performer = "'+$performername+'"'
                     Invoke-SqliteQuery -Query $historyQuery -DataSource $PathToHistoryFile    
                 }
                 catch{
