@@ -799,7 +799,7 @@ function Add-MetadataUsingOFDB{
              
             if (!(DatabaseHasAlreadyBeenImported)){
                 #Select all the media (except audio) and the text the performer associated to them, if available from the OFDB
-                $Query = "SELECT messages.text, medias.directory, medias.filename, medias.size, medias.created_at, medias.post_id, medias.media_type FROM medias INNER JOIN messages ON messages.post_id=medias.post_id UNION SELECT posts.text, medias.directory, medias.filename, medias.size, medias.created_at, medias.post_id, medias.media_type FROM medias INNER JOIN posts ON posts.post_id=medias.post_id WHERE medias.media_type <> 'Audios'"
+                $Query = "SELECT descr.text, medias.directory, medias.filename, medias.size, medias.created_at, medias.post_id, medias.media_type FROM medias INNER JOIN (SELECT messages.text, messages.post_id FROM messages UNION SELECT posts.text, posts.post_id FROM posts UNION SELECT stories.text, stories.post_id FROM stories) as descr ON descr.post_id=medias.post_id WHERE medias.size IS NOT NULL ORDER BY medias.post_id ASC"
                 $OF_DBpath = $currentdatabase.fullname 
                 $OFDBQueryResult = Invoke-SqliteQuery -Query $Query -DataSource $OF_DBpath
 
