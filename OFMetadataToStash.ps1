@@ -318,6 +318,27 @@ function DatabaseHasAlreadyBeenImported{
     }
 } #End DatabaseHasBeenImported
 
+function Build-GQLSQL(){
+    param(
+        [Parameter(Mandatory=$true)][string]$query,
+        [Parameter(Mandatory=$false)][string]$where
+    )
+
+    if($where) {
+        return 'mutation {
+            querySQL(sql: "'+$query+' WHERE '+$where+'") {
+            rows
+          }
+        }'
+    } else {
+        return 'mutation {
+            querySQL(sql: "'+$query+'") {
+            rows
+          }
+        }'
+    }
+}
+
 #Add-MetadataUsingOFDB adds metadata to Stash using metadata databases.
 function Add-MetadataUsingOFDB{
     #Playing it safe and asking the user to back up their database first
@@ -858,57 +879,38 @@ function Add-MetadataUsingOFDB{
                     $ImageMutationBaseQuery='SELECT folders.path, files.basename, files.size, files.id AS files_id, folders.id AS folders_id, images.id AS images_id, images.title AS images_title FROM files JOIN folders ON files.parent_folder_id=folders.id JOIN images_files ON files.id = images_files.file_id JOIN images ON images.id = images_files.image_id'
                     
                     #Depending on user preference, we want to be more/less specific with our SQL queries to the Stash DB here, as determined by this condition tree (defined in order of percieved popularity)
-                    #Normal specificity, search for videos based on having the performer name somewhere in the path and a matching filesize
-                    if ($mediatype -eq "video" -and $searchspecificity -match "normal"){
-                        $StashGQL_Query = 'mutation {
-                            querySQL(sql: "'+$VideoMutationBaseQuery+' WHERE files.basename ='''+$OFDBfilenameForQuery+''' AND size = '''+$OFDBfilesize+'''") {
-                            rows
-                          }
-                        }'             
+                    #Normal specificity
+                    if ($searchspecificity -match "normal") {
+                        #Search for videos based on having the performer name somewhere in the path and a matching filesize
+                        if ($mediatype -eq "video" -and $searchspecificity -match "normal"){
+                            $StashGQL_Query = Build-GQLSQL -query $VideoMutationBaseQuery -where "files.basename = '$OFDBfilenameForQuery' AND size = '$OFDBfilesize'"
+                        }
+                        #Search for images based on having the performer name somewhere in the path and a matching filesize
+                        elseif ($mediatype -eq "image"){
+                            $StashGQL_Query = Build-GQLSQL -query $ImageMutationBaseQuery -where "path LIKE '%$performername%' AND size = '$OFDBfilesize'"
+                        }
+                    }elseif ($searchspecificity -match "low") {
+                        $specwhere="size = '$OFDBfilesize'"
+                        #Low specificity, search for videos based on filesize only
+                        if ($mediatype -eq "video"){
+                            $StashGQL_Query = Build-GQLSQL -query $VideoMutationBaseQuery -where $specwhere
+                        }
+                        #Low specificity, search for images based on filesize only
+                        elseif ($mediatype -eq "image"){
+                            $StashGQL_Query = Build-GQLSQL -query $ImageMutationBaseQuery -where $specwhere
+                        }
+                    }elseif($searchspecificity -match "high"){
+                        $specwhere="files.basename = '$OFDBfilenameForQuery' AND size = '$OFDBfilesize'"
+                        #High specificity, search for videos based on matching file name between OnlyFans DB and Stash DB as well as matching the filesize. 
+                        if ($mediatype -eq "video"){
+                            $StashGQL_Query = Build-GQLSQL -query $VideoMutationBaseQuery -where $specwhere
+                        }
+                        #High specificity, search for images based on matching file name between OnlyFans DB and Stash DB as well as matching the filesize. 
+                        else{
+                            $StashGQL_Query = Build-GQLSQL -query $ImageMutationBaseQuery -where $specwhere
+                        }
                     }
-                    #Normal specificity, search for images based on having the performer name somewhere in the path and a matching filesize
-                    elseif ($mediatype -eq "image" -and $searchspecificity -match "normal"){
-                        $StashGQL_Query = 'mutation {
-                            querySQL(sql: "'+$ImageMutationBaseQuery+' WHERE path LIKE ''%'+$performername+'%'' AND size = '''+$OFDBfilesize+'''") {
-                            rows
-                          }
-                        }'
-                    }
-                    #Low specificity, search for videos based on filesize only
-                    elseif ($mediatype -eq "video" -and $searchspecificity -match "low"){
-                        $StashGQL_Query = 'mutation {
-                            querySQL(sql: "'+$VideoMutationBaseQuery+' WHERE size = '''+$OFDBfilesize+'''") {
-                            rows
-                          }
-                        }'   
-                    }
-                    #Low specificity, search for images based on filesize only
-                    elseif ($mediatype -eq "image" -and $searchspecificity -match "low"){
-                        $StashGQL_Query = 'mutation {
-                            querySQL(sql: "'+$ImageMutationBaseQuery+' WHERE size = '''+$OFDBfilesize+'''") {
-                            rows
-                          }
-                        }'
-                    }
-    
-                    #High specificity, search for videos based on matching file name between OnlyFans DB and Stash DB as well as matching the filesize. 
-                    elseif ($mediatype -eq "video" -and $searchspecificity -match "high"){
-                        $StashGQL_Query = 'mutation {
-                            querySQL(sql: "'+$VideoMutationBaseQuery+' WHERE files.basename ='''+$OFDBfilenameForQuery+''' AND size = '''+$OFDBfilesize+'''") {
-                            rows
-                          }
-                        }'
-                    }
-    
-                    #High specificity, search for images based on matching file name between OnlyFans DB and Stash DB as well as matching the filesize. 
-                    else{
-                        $StashGQL_Query = 'mutation {
-                            querySQL(sql: "'+$ImageMutationBaseQuery+' WHERE files.basename ='''+$OFDBfilenameForQuery+''' AND size = '''+$OFDBfilesize+'''") {
-                            rows
-                          }
-                        }'
-                    }
-    
+                    
                     #Now lets try running the GQL query and see if we have a match in the Stash DB
                     try{
                         $StashGQL_Result = Invoke-GraphQLQuery -Query $StashGQL_Query -Uri $StashGQL_URL -Headers $(if ($StashAPIKey){ @{ApiKey = "$StashAPIKey" }})
@@ -965,24 +967,15 @@ function Add-MetadataUsingOFDB{
                         
                         #Before processing, and for the sake of accuracy, if there are multiple filesize matches (specifically for the normal specificity mode), add a filename check to the query to see if we can match more specifically. If not, just use whatever matched that initial query.
                         if (($StashGQL_Result.data.querySQL.rows.length -gt 1) -and ($searchspecificity -match "normal") ){
+                            $specwhere="path LIKE '%$performername%' AND files.basename = '$OFDBfilenameForQuery' AND size = '$OFDBfilesize'"
                             #Search for videos based on having the performer name somewhere in the path and a matching filesize (and filename in this instance)
                             if ($mediatype -eq "video"){
-                               
-                                $StashGQL_Query = 'mutation {
-                                    querySQL(sql: "'+$VideoMutationBaseQuery+' WHERE path LIKE ''%'+$performername+'%'' AND files.basename ='''+$OFDBfilenameForQuery+''' AND size = '''+$OFDBfilesize+'''") {
-                                    rows
-                                  }
-                                }'
+                                $StashGQL_Query = Build-GQLSQL -query $VideoMutationBaseQuery -where $specwhere
                             }
     
                             #Search for images based on having the performer name somewhere in the path and a matching filesize (and filename in this instance)
                             elseif ($mediatype -eq "image" ){
-                                
-                                $StashGQL_Query = 'mutation {
-                                    querySQL(sql: "'+$ImageMutationBaseQuery+' WHERE path LIKE ''%'+$performername+'%'' AND files.basename ='''+$OFDBfilenameForQuery+''' AND size = '''+$OFDBfilesize+'''") {
-                                    rows
-                                  }
-                                }'
+                                $StashGQL_Query = Build-GQLSQL -query $ImageMutationBaseQuery -where $specwhere
                             }
     
                             #Now lets try running the GQL query and try to find the file in the Stash DB
