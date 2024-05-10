@@ -759,7 +759,7 @@ function Add-MetadataUsingOFDB {
                 read-host "Press [Enter] to exit"
                 exit
             }
-            $PerformerID = $StashGQL_Result.data.findPerformers.performers[0].id
+            $PerformerID = ($StashGQL_Result.data.findPerformers.performers | Where-Object -Property name -EQ $performername)?.id
             
             #If we had no luck finding the performer, lets create one, then get the ID
             if ($null -eq $performerID) {
