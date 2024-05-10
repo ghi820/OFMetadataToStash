@@ -31,14 +31,66 @@ Import-Module PSSQLite
 
 
 ### Functions
+#Get-Json-Config loads the configuration
+function Get-Json-Config{
+    Get-Content -Raw $JsonConfig | ConvertFrom-Json
+}
+
+#Get-Json-Default-Config loads the defaults (also a workaround for not declaring a class)
+function Get-Json-Default-Config{
+    Get-Content -Raw $JsonDefaultConfig | ConvertFrom-Json
+}
+
+#Write-Config persist the $config to file
+function Write-Config{
+    #Now to make our configuration file
+    try { 
+        Out-File $JsonConfig
+    }
+    catch{
+        write-output "Error - Something went wrong while trying to save the config file to the filesystem ($JsonConfig)" -ForegroundColor red
+        read-output "Press [Enter] to exit" -ForegroundColor red
+        exit
+    }
+
+    try{ 
+        $config | ConvertTo-Json | Set-Content -path $JsonConfig
+    }
+    catch {
+        write-output "Error - Something went wrong while trying add your configurations to the config file ($JsonConfig)" -ForegroundColor red
+        read-output "Press [Enter] to exit" -ForegroundColor red
+        exit
+    }
+}
+
+#Migrate-Config migrates the old format to the new json format
+function Migrate-Config{
+    $ConfigFileVersion = (Get-Content $PathToConfigFile)[0]
+    if ($ConfigFileVersion -eq "#### OFMetadataToStash Config File v1 ####"){
+        $config=Get-Json-Default-Config
+        $config.api_url = (Get-Content $pathtoconfigfile)[3]
+        $config.metadata_folder = (Get-Content $pathtoconfigfile)[5]
+        $config.specificity = (Get-Content $pathtoconfigfile)[7]
+        $config.api_token = (Get-Content $pathtoconfigfile)[9]
+        Write-Config
+    }
+    Remove-Item -Path $PathToConfigFile
+}
+
+#Invoke-StashGQL passthrough wrapper to avoid repeating the URI and Header
+function Invoke-StashGQL{
+    Invoke-GraphQLQuery -Uri $config.api_url -Headers $(if ($config.api_token){ @{ApiKey = "$($config.api_token)" }}) @args
+}
+
 #Set-Config is a wizard that walks the user through the configuration settings
 function Set-Config{
+    $config = Get-Json-Default-Config
     clear-host
     write-host "OnlyFans Metadata DB to Stash PoSH Script" -ForegroundColor Cyan
     write-output "Configuration Setup Wizard"
     write-output "--------------------------`n"
     write-output "(1 of 3) Define the URL to your Stash"
-    write-output "Option 1: Stash is hosted on the computer I'm using right now (localhost:9999)"
+    write-output "Option 1: Stash is hosted on the computer I'm using right now ($($config.api_url))"
     write-output "Option 2: Stash is hosted at a different address and/or port (Ex. 192.168.1.2:6969)`n"
     do{
         do {
@@ -46,23 +98,20 @@ function Set-Config{
         }
         while (($userselection -notmatch "[1-2]"))
 
-        if ($userselection -eq 1){
-            $StashGQL_URL = "http://localhost:9999/graphql"
-        }
-
         #Asking the user for the Stash URL, with some error handling
-        else {
-            while ($null -eq $StashGQL_URL ){
-                $StashGQL_URL = read-host "`nPlease enter the URL to your Stash"
-                $StashGQL_URL = $StashGQL_URL + '/graphql' #Tacking on the gql endpoint
+        if ($userselection -eq 2){
+            $config.api_url = $null
+            while ($null -eq $config.api_url ){
+                $config.api_url = read-host "`nPlease enter the URL to your Stash"
+                $config.api_url = $config.api_url + '/graphql' #Tacking on the gql endpoint
         
-                while (!($StashGQL_URL.contains(":"))){
+                while (!($config.api_url.contains(":"))){
                     write-host "Error: Oops, looks like you forgot to enter the port number (Ex. <URL>:9999)." -ForegroundColor red
-                    $StashGQL_URL = read-host "`nPlease enter the URL to your Stash"
+                    $config.api_url = read-host "`nPlease enter the URL to your Stash"
                 }
         
-                if (!($StashGQL_URL.contains("http"))){
-                    $StashGQL_URL = "http://"+$StashGQL_URL
+                if (!($config.api_url.contains("http"))){
+                    $config.api_url = "http://"+$config.api_url
                 }
             }
         }
@@ -74,22 +123,22 @@ function Set-Config{
         if($userselection -like "Y"){
             write-host "As you have set a username/password on your Stash, You'll need to provide this script with your API key."
             write-host "Navigate to this page in your browser to generate one in Stash"
-            write-host "$StashGQL_URL/settings?tab=security"
+            write-host "$($config.api_url)/settings?tab=security"
             write-host "`n- WARNING: The API key will be stored in cleartext in the config file of this script. - " -ForegroundColor yellow
             write-host "If someone who has access to your Stash gets access to the config file, they may be able to use it to bypass the username and password you've set."
-            $StashAPIKey = read-host "`nWhat is your API key?"
+            $config.api_token = read-host "`nWhat is your API key?"
         }
         else{
-            $StashAPIKey = $false
+            $config.api_token = $false
         }
 
         #Now we can check to ensure this address is valid-- we'll use a very simple GQL query and get the Stash version
         $StashGQL_Query = 'query version{version{version}}'
         try{
-            $stashversion = Invoke-GraphQLQuery -Query $StashGQL_Query -Uri $StashGQL_URL -Headers $(if ($StashAPIKey){ @{ApiKey = "$StashAPIKey" }})
+            $stashversion = Invoke-StashGQL -Query $StashGQL_Query
         }
         catch{
-            write-host "(0) Error: Could not communicate to Stash at the provided address ($StashGQL_URL)"
+            write-host "(0) Error: Could not communicate to Stash at the provided address ($($config.api_url))"
             read-host "No worries, press [Enter] to start from the top"
         }
     }
@@ -103,13 +152,13 @@ function Set-Config{
     write-host "    * OnlyFans metadata database files are named 'user_data.db' and they are commonly `n      located under <performername> $directorydelimiter metadata $directorydelimiter , as defined by your OnlyFans scraper of choice"
     write-output "`n    * You have the option of linking directly to the 'user_data.db' file, `n      or you can link to the top level OnlyFans folder of several metadata databases."
     write-output "`n    * When multiple database are detected, this script can help you select one (or even import them all in batch!)`n"
-    if ($null -ne $PathToOnlyFansContent){
+    if ($null -ne $config.metadata_folder){
         #If the user is coming to this function with this variable set, we set it to null so that there is better user feedback if a bad filepath is provided by the user.
-        $PathToOnlyFansContent = $null
+        $config.metadata_folder = $null
     }
     do{
         #Providing some user feedback if we tested the path and it came back as invalid
-        if($null -ne $PathToOnlyFansContent){
+        if($null -ne $config.metadata_folder){
             write-output "Oops. Invalid filepath"
         }
         if($IsWindows){
@@ -126,7 +175,7 @@ function Set-Config{
                 Add-Type -AssemblyName System.Windows.Forms
                 $FileBrowser = New-Object System.Windows.Forms.FolderBrowserDialog
                 $null = $FileBrowser.ShowDialog()
-                $PathToOnlyFansContent = $FileBrowser.SelectedPath
+                $config.metadata_folder = $FileBrowser.SelectedPath
             }
             else {
                 Add-Type -AssemblyName System.Windows.Forms
@@ -134,14 +183,14 @@ function Set-Config{
                     Filter = 'OnlyFans Metadata Database File (*.db)|*.db'
                 }
                 $null = $FileBrowser.ShowDialog()
-                $PathToOnlyFansContent = $FileBrowser.filename
+                $config.metadata_folder = $FileBrowser.filename
             }
         }
         else{
-            $PathToOnlyFansContent = read-host "Enter the folder containing your OnlyFans content or a direct link to your OnlyFans Metadata Database"
+            $config.metadata_folder = read-host "Enter the folder containing your OnlyFans content or a direct link to your OnlyFans Metadata Database"
         }
     }
-    while(!(test-path $PathToOnlyFansContent))
+    while(!(test-path $config.metadata_folder))
 
     clear-host
     write-host "OnlyFans Metadata DB to Stash PoSH Script" -ForegroundColor Cyan
@@ -163,13 +212,13 @@ function Set-Config{
 
     #Code for parsing metadata files
     if($specificityselection -eq 1){
-        $SearchSpecificity = "Normal"
+        $config.specificity = "Normal"
     }
     elseif($specificityselection -eq 2){
-        $SearchSpecificity = "Low"
+        $config.specificity = "Low"
     }
     else{
-        $SearchSpecificity = "High"
+        $config.specificity = "High"
     }
 
     clear-host
@@ -178,57 +227,15 @@ function Set-Config{
     write-output "--------------------------`n"
     write-output "(Summary) Review your settings`n"
 
-    write-output "URL to Stash API:`n - $StashGQL_URL`n"
-    write-output "Path to OnlyFans Content:`n - $PathToOnlyFansContent`n"
-    write-output "Metadata Match Mode:`n - $SearchSpecificity`n"
+    write-output "URL to Stash API:`n - $($config.api_url)`n"
+    write-output "Path to OnlyFans Content:`n - $($config.metadata_folder)`n"
+    write-output "Metadata Match Mode:`n - $($config.specificity)`n"
 
     read-host "Press [Enter] to save this configuration and return to the Main Menu"
 
 
     #Now to make our configuration file
-    try { 
-        Out-File $PathToConfigFile
-    }
-    catch{
-        write-output "Error - Something went wrong while trying to save the config file to the filesystem ($PathToConfigFile)" -ForegroundColor red
-        read-output "Press [Enter] to exit" -ForegroundColor red
-        exit
-    }
-
-    try{ 
-        #Connectivity to Stash bits
-        Add-Content -path $PathToConfigFile -value "#### OFMetadataToStash Config File v2 ####"
-        Add-Content -path $PathToConfigFile -value "------------------------------------------"
-        Add-Content -path $PathToConfigFile -value "## URL to the Stash GraphQL API endpoint ##"
-        Add-Content -path $PathToConfigFile -value $StashGQL_URL
-        Add-Content -path $PathToConfigFile -value "## Stash API Key (Danger!)##"
-        Add-Content -path $PathToConfigFile -value $StashAPIKey
-
-        #Metadata matching bits
-        Add-Content -path $PathToConfigFile -value "## Whether or not script should match on filename ($true or $false)##"
-        Add-Content -path $PathToConfigFile -value $matchMetadataOnFilename
-        Add-Content -path $PathToConfigFile -value "## Whether or not script should match on filesize ($true or $false)##"
-        Add-Content -path $PathToConfigFile -value $matchMetadataOnFilesize
-        Add-Content -path $PathToConfigFile -value "## Whether or not script should also check to see if the performername exists in the filepath when matching ($true or $false)##"
-        Add-Content -path $PathToConfigFile -value $matchMetadataOnPerformername
-
-        #Formatting bits
-        Add-Content -path $PathToConfigFile -value "##Naming format for the parent studio (ex Onlyfans)##"
-        Add-Content -path $PathToConfigFile -value $parentStudioNameFormat
-        Add-Content -path $PathToConfigFile -value "##Naming format for the studio (ex JaneAndJohn (OnlyFans)) ##"
-        Add-Content -path $PathToConfigFile -value $studioNameFormat
-
-
-        #Path to content
-        Add-Content -path $PathToConfigFile -value "## Direct Path to OnlyFans Metadata Database or top level folder containing OnlyFans content ##"
-        Add-Content -path $PathToConfigFile -value $PathToOnlyFansContent
-    }
-    catch {
-        write-output "Error - Something went wrong while trying add your configurations to the config file ($PathToConfigFile)" -ForegroundColor red
-        read-output "Press [Enter] to exit" -ForegroundColor red
-        exit
-    }
-    
+    Write-Config
 } #End Set-Config
 
 #DatabaseHasBeenImported does a check to see if a particular metadata database file actually needs to be parsed based on a history file. Returns true if this database needs to be parsed
@@ -353,7 +360,7 @@ function Add-MetadataUsingOFDB{
           }' 
 
         try{
-            Invoke-GraphQLQuery -Query $StashGQL_Query -Uri $StashGQL_URL -Variables $StashGQL_QueryVariables -Headers $(if ($StashAPIKey){ @{ApiKey = "$StashAPIKey" }}) | out-null
+            Invoke-StashGQL -Query $StashGQL_Query -Variables $StashGQL_QueryVariables | out-null
         }
         catch{
             write-host "(10) Error: There was an issue with the GraphQL query/mutation." -ForegroundColor red
@@ -374,7 +381,7 @@ function Add-MetadataUsingOFDB{
     write-output "`nScanning for existing OnlyFans Metadata Database files..."
 
     #Finding all of our metadata databases. 
-    $OFDatabaseFilesCollection = Get-ChildItem -Path $PathToOnlyFansContent -Recurse | where-object {$_.name -in "user_data.db","posts.db"}
+    $OFDatabaseFilesCollection = Get-ChildItem -Path $config.metadata_folder -Recurse | where-object {$_.name -in "user_data.db","posts.db"}
         
     #For the discovery of a single database file
     if ($OFDatabaseFilesCollection.count -eq 1){
@@ -607,7 +614,7 @@ function Add-MetadataUsingOFDB{
         }
       }'
     try{
-        $StashGQL_Result = Invoke-GraphQLQuery -Query $StashGQL_Query -Uri $StashGQL_URL -Variables $StashGQL_QueryVariables -Headers $(if ($StashAPIKey){ @{ApiKey = "$StashAPIKey" }})
+        $StashGQL_Result = Invoke-StashGQL -Query $StashGQL_Query -Variables $StashGQL_QueryVariables
     }
     catch{
         write-host "(1) Error: There was an issue with the GraphQL query/mutation." -ForegroundColor red
@@ -634,7 +641,7 @@ function Add-MetadataUsingOFDB{
         }'
 
         try{
-            $StashGQL_Result = Invoke-GraphQLQuery -Query $StashGQL_Query -Uri $StashGQL_URL -Variables $StashGQL_QueryVariables -Headers $(if ($StashAPIKey){ @{ApiKey = "$StashAPIKey" }})
+            $StashGQL_Result = Invoke-StashGQL -Query $StashGQL_Query -Variables $StashGQL_QueryVariables
         }
         catch{
             write-host "(9) Error: There was an issue with the GraphQL query/mutation." -ForegroundColor red
@@ -659,7 +666,7 @@ function Add-MetadataUsingOFDB{
         }
         }'
         try{
-            $StashGQL_Result = Invoke-GraphQLQuery -Query $StashGQL_Query -Uri $StashGQL_URL -Variables $StashGQL_QueryVariables -Headers $(if ($StashAPIKey){ @{ApiKey = "$StashAPIKey" }})
+            $StashGQL_Result = Invoke-StashGQL -Query $StashGQL_Query -Variables $StashGQL_QueryVariables
         }
         catch{
             write-host "(9a) Error: There was an issue with the GraphQL query/mutation." -ForegroundColor red
@@ -743,7 +750,7 @@ function Add-MetadataUsingOFDB{
                 }
             }'
             try{
-                $StashGQL_Result = Invoke-GraphQLQuery -Query $StashGQL_Query -Uri $StashGQL_URL -Variables $StashGQL_QueryVariables -Headers $(if ($StashAPIKey){ @{ApiKey = "$StashAPIKey" }})
+                $StashGQL_Result = Invoke-StashGQL -Query $StashGQL_Query -Variables $StashGQL_QueryVariables
             }
             catch{
                 write-host "(2) Error: There was an issue with the GraphQL query/mutation." -ForegroundColor red
@@ -771,7 +778,7 @@ function Add-MetadataUsingOFDB{
                 }' 
             
                 try{
-                    Invoke-GraphQLQuery -Query $StashGQL_Query -Uri $StashGQL_URL -Variables $StashGQL_QueryVariables -Headers $(if ($StashAPIKey){ @{ApiKey = "$StashAPIKey" }}) | out-null
+                    Invoke-StashGQL -Query $StashGQL_Query -Variables $StashGQL_QueryVariables | out-null
                 }
                 catch{
                     write-host "(3) Error: There was an issue with the GraphQL query/mutation." -ForegroundColor red
@@ -796,7 +803,7 @@ function Add-MetadataUsingOFDB{
                     }
                 }'
                 try{
-                    $StashGQL_Result = Invoke-GraphQLQuery -Query $StashGQL_Query -Uri $StashGQL_URL -Variables $StashGQL_QueryVariables -Headers $(if ($StashAPIKey){ @{ApiKey = "$StashAPIKey" }})
+                    $StashGQL_Result = Invoke-StashGQL -Query $StashGQL_Query -Variables $StashGQL_QueryVariables
                 }
                 catch{
                     write-host "(22) Error: There was an issue with the GraphQL query/mutation." -ForegroundColor red
@@ -880,16 +887,16 @@ function Add-MetadataUsingOFDB{
                     
                     #Depending on user preference, we want to be more/less specific with our SQL queries to the Stash DB here, as determined by this condition tree (defined in order of percieved popularity)
                     #Normal specificity
-                    if ($searchspecificity -match "normal") {
+                    if ($config.specificity -match "normal") {
                         #Search for videos based on having the performer name somewhere in the path and a matching filesize
-                        if ($mediatype -eq "video" -and $searchspecificity -match "normal"){
+                        if ($mediatype -eq "video" -and $config.specificity -match "normal"){
                             $StashGQL_Query = Build-GQLSQL -query $VideoMutationBaseQuery -where "files.basename = '$OFDBfilenameForQuery' AND size = '$OFDBfilesize'"
                         }
                         #Search for images based on having the performer name somewhere in the path and a matching filesize
                         elseif ($mediatype -eq "image"){
                             $StashGQL_Query = Build-GQLSQL -query $ImageMutationBaseQuery -where "path LIKE '%$performername%' AND size = '$OFDBfilesize'"
                         }
-                    }elseif ($searchspecificity -match "low") {
+                    }elseif ($config.specificity -match "low") {
                         $specwhere="size = '$OFDBfilesize'"
                         #Low specificity, search for videos based on filesize only
                         if ($mediatype -eq "video"){
@@ -899,7 +906,7 @@ function Add-MetadataUsingOFDB{
                         elseif ($mediatype -eq "image"){
                             $StashGQL_Query = Build-GQLSQL -query $ImageMutationBaseQuery -where $specwhere
                         }
-                    }elseif($searchspecificity -match "high"){
+                    }elseif($config.specificity -match "high"){
                         $specwhere="files.basename = '$OFDBfilenameForQuery' AND size = '$OFDBfilesize'"
                         #High specificity, search for videos based on matching file name between OnlyFans DB and Stash DB as well as matching the filesize. 
                         if ($mediatype -eq "video"){
@@ -913,7 +920,7 @@ function Add-MetadataUsingOFDB{
                     
                     #Now lets try running the GQL query and see if we have a match in the Stash DB
                     try{
-                        $StashGQL_Result = Invoke-GraphQLQuery -Query $StashGQL_Query -Uri $StashGQL_URL -Headers $(if ($StashAPIKey){ @{ApiKey = "$StashAPIKey" }})
+                        $StashGQL_Result = Invoke-StashGQL -Query $StashGQL_Query
                     }
                     catch{
                         write-host "(4) Error: There was an issue with the GraphQL query/mutation." -ForegroundColor red
@@ -942,7 +949,7 @@ function Add-MetadataUsingOFDB{
                             }
                             if (!(Test-Path $OFDBFullFilePath)){
                                 write-host "`nInfo: There's a file in this OnlyFans metadata database that we couldn't find in your Stash database.`nThis file also doesn't appear to be on your filesystem (we checked with both Windows and *nix path delimeters).`nTry rerunning the script you used to scrape this OnlyFans performer and redownloading the file." -ForegroundColor Cyan
-                                write-host "- Scan Specificity Mode: $SearchSpecificity"
+                                write-host "- Scan Specificity Mode: $($config.specificity)"
                                 write-host "- Filename: $OFDBfilename"
                                 write-host "- Directory: $OFDBdirectory"
                                 write-host "- Filesize: $OFDBfilesize"
@@ -966,7 +973,7 @@ function Add-MetadataUsingOFDB{
                     else{
                         
                         #Before processing, and for the sake of accuracy, if there are multiple filesize matches (specifically for the normal specificity mode), add a filename check to the query to see if we can match more specifically. If not, just use whatever matched that initial query.
-                        if (($StashGQL_Result.data.querySQL.rows.length -gt 1) -and ($searchspecificity -match "normal") ){
+                        if (($StashGQL_Result.data.querySQL.rows.length -gt 1) -and ($config.specificity -match "normal") ){
                             $specwhere="path LIKE '%$performername%' AND files.basename = '$OFDBfilenameForQuery' AND size = '$OFDBfilesize'"
                             #Search for videos based on having the performer name somewhere in the path and a matching filesize (and filename in this instance)
                             if ($mediatype -eq "video"){
@@ -980,7 +987,7 @@ function Add-MetadataUsingOFDB{
     
                             #Now lets try running the GQL query and try to find the file in the Stash DB
                             try{
-                                $AlternativeStashGQL_Result = Invoke-GraphQLQuery -Query $StashGQL_Query -Uri $StashGQL_URL -Headers $(if ($StashAPIKey){ @{ApiKey = "$StashAPIKey" }})
+                                $AlternativeStashGQL_Result = Invoke-StashGQL -Query $StashGQL_Query
                             }
                             catch{
                                 write-host "(5) Error: There was an issue with the GraphQL query/mutation." -ForegroundColor red
@@ -1011,7 +1018,7 @@ function Add-MetadataUsingOFDB{
                         $detailsToAddToStash = $detailsToAddToStash.Replace("</a>"," ")
                         $detailsToAddToStash = $detailsToAddToStash.Replace('target="_blank"',"")
     
-                        #For some reason the invoke-graphqlquery module doesn't quite escape single/double quotes ' " (or their curly variants) or backslashs \ very well so let's do it manually for the sake of our JSON query
+                        #For some reason the Invoke-GraphQLQuery module doesn't quite escape single/double quotes ' " (or their curly variants) or backslashs \ very well so let's do it manually for the sake of our JSON query
                         $detailsToAddToStash = $detailsToAddToStash.replace("\","\\")
                         $detailsToAddToStash = $detailsToAddToStash.replace('"','\"')
                         $detailsToAddToStash = $detailsToAddToStash.replace('“','\"') #literally removing the curly quote entirely
@@ -1043,7 +1050,7 @@ function Add-MetadataUsingOFDB{
                             }' 
                             
                             try{
-                                $DiscoveredPerformerIDFromStash = Invoke-GraphQLQuery -Query $StashGQL_Query -Uri $StashGQL_URL -Variables $StashGQL_QueryVariables -Headers $(if ($StashAPIKey){ @{ApiKey = "$StashAPIKey" }})
+                                $DiscoveredPerformerIDFromStash = Invoke-StashGQL -Query $StashGQL_Query -Variables $StashGQL_QueryVariables
                             }
                             catch{
                                 write-host "(6) Error: There was an issue with the GraphQL query/mutation." -ForegroundColor red
@@ -1078,7 +1085,7 @@ function Add-MetadataUsingOFDB{
                                     }
                                 }'
                                 try{
-                                    Invoke-GraphQLQuery -Query $StashGQL_Query -Uri $StashGQL_URL -Variables $StashGQL_QueryVariables -Headers $(if ($StashAPIKey){ @{ApiKey = "$StashAPIKey" }}) | out-null
+                                    Invoke-StashGQL -Query $StashGQL_Query -Variables $StashGQL_QueryVariables | out-null
                                 }
                                 catch{
                                     write-host "(7) Error: There was an issue with the GraphQL query/mutation." -ForegroundColor red
@@ -1114,7 +1121,7 @@ function Add-MetadataUsingOFDB{
                                 }'
     
                                 try{
-                                    Invoke-GraphQLQuery -Headers $(if ($StashAPIKey){ @{ApiKey = "$StashAPIKey" }}) -Query $StashGQL_Query -Uri $StashGQL_URL -Variables $StashGQL_QueryVariables -escapehandling EscapeNonAscii | out-null
+                                    Invoke-StashGQL -Query $StashGQL_Query -Variables $StashGQL_QueryVariables -escapehandling EscapeNonAscii | out-null
                                 }
                                 catch{
                                     write-host "(8) Error: There was an issue with the GraphQL query/mutation." -ForegroundColor red
@@ -1160,7 +1167,7 @@ function Add-MetadataUsingOFDB{
                             }' 
                             
                             try{
-                                $DiscoveredPerformerIDFromStash = Invoke-GraphQLQuery -Query $StashGQL_Query -Uri $StashGQL_URL -Variables $StashGQL_QueryVariables -Headers $(if ($StashAPIKey){ @{ApiKey = "$StashAPIKey" }})
+                                $DiscoveredPerformerIDFromStash = Invoke-StashGQL -Query $StashGQL_Query -Variables $StashGQL_QueryVariables
                             }
                             catch{
                                 write-host "(6) Error: There was an issue with the GraphQL query/mutation." -ForegroundColor red
@@ -1195,7 +1202,7 @@ function Add-MetadataUsingOFDB{
                                     }
                                 }'
                                 try{
-                                    Invoke-GraphQLQuery -Query $StashGQL_Query -Uri $StashGQL_URL -Variables $StashGQL_QueryVariables -Headers $(if ($StashAPIKey){ @{ApiKey = "$StashAPIKey" }}) | out-null
+                                    Invoke-StashGQL -Query $StashGQL_Query -Variables $StashGQL_QueryVariables | out-null
                                 }
                                 catch{
                                     write-host "(7) Error: There was an issue with the GraphQL query/mutation." -ForegroundColor red
@@ -1259,7 +1266,7 @@ function Add-MetadataUsingOFDB{
                                 
                                 
                                 try{
-                                    Invoke-GraphQLQuery -Query $StashGQL_Query -Uri $StashGQL_URL -Variables $StashGQL_QueryVariables -Headers $(if ($StashAPIKey){ @{ApiKey = "$StashAPIKey" }}) | out-null
+                                    Invoke-StashGQL -Query $StashGQL_Query -Variables $StashGQL_QueryVariables | out-null
                                 }
                                 catch{
                                     write-host "(8) Error: There was an issue with the GraphQL query/mutation." -ForegroundColor red
@@ -1358,7 +1365,7 @@ function Add-MetadataUsingOFDB{
                     }'
 
                     try{
-                        Invoke-GraphQLQuery -Query $UpdatePerformerImage_GQLQuery -Uri $StashGQL_URL -Variables $UpdatePerformerImage_GQLVariables -Headers $(if ($StashAPIKey){ @{ApiKey = "$StashAPIKey" }}) | out-null
+                        Invoke-StashGQL -Query $UpdatePerformerImage_GQLQuery -Variables $UpdatePerformerImage_GQLVariables | out-null
                     }
                     catch{
                         write-host "(46) Error: There was an issue with the GraphQL query/mutation." -ForegroundColor red
@@ -1408,7 +1415,7 @@ function Add-MetadataUsingOFDB{
                     }'
     
                     try{
-                        $performerimageURL = Invoke-GraphQLQuery -Query $performerimageURL_GQLQuery -Uri $StashGQL_URL -Variables $performerimageURLVariables_GQLQuery -Headers $(if ($StashAPIKey){ @{ApiKey = "$StashAPIKey" }})
+                        $performerimageURL = Invoke-StashGQL -Query $performerimageURL_GQLQuery -Variables $performerimageURLVariables_GQLQuery
                         
                     }
                     catch{
@@ -1436,7 +1443,7 @@ function Add-MetadataUsingOFDB{
                         }'
     
                         try{
-                            $performerimageURL = Invoke-GraphQLQuery -Query $UpdatePerformerImage_GQLQuery -Uri $StashGQL_URL -Variables $UpdatePerformerImage_GQLVariables -Headers $(if ($StashAPIKey){ @{ApiKey = "$StashAPIKey" }}) | out-null
+                            $performerimageURL = Invoke-StashGQL -Query $UpdatePerformerImage_GQLQuery -Variables $UpdatePerformerImage_GQLVariables | out-null
                         }
                         catch{
                             write-host "(12) Error: There was an issue with the GraphQL query/mutation." -ForegroundColor red
@@ -1497,25 +1504,23 @@ else{
 
 $pathtoconfigfile = "."+$directorydelimiter+"OFMetadataToStash_Config"
 
-#If there's no configuration file, send the user to create one
-if (!(Test-path $PathToConfigFile)){
-    Set-Config
-}
-#If the config file version isn't in line with what this script expects, send the user to create one
-$ConfigFileVersion = (Get-Content $pathtoconfigfile)[0]
-if ($ConfigFileVersion -ne "#### OFMetadataToStash Config File v2 ####"){
-    Set-Config
-}
+$JsonConfig = "."+$directorydelimiter+"config.json"
+$JsonDefaultConfig = $PSScriptRoot+$directorydelimiter+"OFMetadataToStash_defaults.json"
 
-## Global Variables ##
-$StashGQL_URL = (Get-Content $pathtoconfigfile)[3]
-$StashAPIKey = (Get-Content $pathtoconfigfile)[5]
-$matchMetadataOnFilename = (Get-Content $pathtoconfigfile)[7]
-$matchMetadataOnFilesize = (Get-Content $pathtoconfigfile)[9]
-$matchMetadataOnPerformername = (Get-Content $pathtoconfigfile)[11]
-$parentStudioNameFormat = (Get-Content $pathtoconfigfile)[13]
-$studioNameFormat = (Get-Content $pathtoconfigfile)[15]
-$PathToOnlyFansContent = (Get-Content $pathtoconfigfile)[17]
+#If there's no configuration file, send the user to create one
+if (!(Test-path $JsonConfig)){
+    # check for old config-format
+    if (Test-Path $PathToConfigFile) {
+        Migrate-Config
+    } else {
+        Set-Config
+    }
+}
+$config = Get-Json-Config
+if ($config.version -ne "3"){
+    Set-Config
+}
+$config = Get-Json-Config
 
 $PathToMissingFilesLog = "."+$directorydelimiter+"OFMetadataToStash_MissingFiles.txt"
 $pathToSanitizerScript = "."+$directorydelimiter+"Utilities"+$directorydelimiter+"OFMetadataDatabase_Sanitizer.ps1"
@@ -1524,10 +1529,10 @@ $pathToSanitizerScript = "."+$directorydelimiter+"Utilities"+$directorydelimiter
 #This query also serves a second purpose-- as of Stash v0.24, images will support details. We'll check for that and add details if possible.
 $StashGQL_Query = 'query version{version{version}}'
 try{
-    $StashGQL_Result = Invoke-GraphQLQuery -Query $StashGQL_Query -Uri $StashGQL_URL -Headers $(if ($StashAPIKey){ @{ApiKey = "$StashAPIKey" }})
+    $StashGQL_Result = Invoke-StashGQL -Query $StashGQL_Query
 }
 catch{
-    write-host "Hmm...Could not communicate to Stash using the URL in the config file ($StashGQL_URL)"
+    write-host "Hmm...Could not communicate to Stash using the URL in the config file ($($config.api_url))"
     write-host "Are you sure Stash is running?"
     read-host "If Stash is running like normal, press [Enter] to recreate the configuration file for this script"
     Set-Config
@@ -1542,14 +1547,14 @@ else {
 }
 
 #If the config file is missing information, send the user to create a new one.
-$checkforemptyvariables = @($StashGQL_URL, $StashAPIKey, $matchMetadataOnFilename, $matchMetadataOnFilesize,$matchMetadataOnPerformername,$parentStudioNameFormat,$studioNameFormat,$PathToOnlyFansContent)
-If ($checkforemptyvariables -contains "") {
+$checkforemptyvariables = @($config.api_url, $config.api_token, $config.match_filename, $config.match_size, $config.match_performer, $config.parent_studio_format, $config.studio_format, $config.metadata_folder)
+If ($checkforemptyvariables.Length -eq 0) {
     Set-Config
 }
 
-if (!(test-path $PathToOnlyFansContent)){
+if (!(test-path $config.metadata_folder)){
     #Couldn't find the path? Send the user to recreate their config file with the set-config function
-    read-host "Hmm...The defined path to your OnlyFans content does not seem to exist at the location specified in your config file.`n($PathToOnlyFansContent)`n`nPress [Enter] to run through the config wizard"
+    read-host "Hmm...The defined path to your OnlyFans content does not seem to exist at the location specified in your config file.`n($($config.metadata_folder))`n`nPress [Enter] to run through the config wizard"
     Set-Config
 }
 
@@ -1557,9 +1562,9 @@ else {
     clear-host
     write-host "- OnlyFans Metadata DB to Stash PoSH Script 0.10 - `n(https://github.com/ALonelyJuicebox/OFMetadataToStash)`n" -ForegroundColor cyan
     write-output "By JuiceBox`n`n----------------------------------------------------`n"
-    write-output "* Path to OnlyFans Media:     $PathToOnlyFansContent"
-    write-output "* Metadata Match Mode:        $searchspecificity"
-    write-output "* Stash URL:                  $StashGQL_URL`n"
+    write-output "* Path to OnlyFans Media:     $($config.metadata_folder)"
+    write-output "* Metadata Match Mode:        $($config.specificity)"
+    write-output "* Stash URL:                  $($config.api_url)`n"
     if($v){
         write-host "Special Mode Enabled: Verbose Output" -ForegroundColor yellow
     }
